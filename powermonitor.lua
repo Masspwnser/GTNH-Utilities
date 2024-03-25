@@ -3,16 +3,14 @@ local os = require("os")
 local keyboard = require("keyboard")
 local component = require("component")
 local computer = require("computer")
-
-local gpu = component.gpu
-gpu.setResolution(60,18)
-local w, h = gpu.getResolution()
+local screenutil = require("screenutil")
 
 local tickRate = 0.05 -- Minecraft tickrate in seconds
 
 local logicRate = tickRate -- Frequency to poll power data
 local drawRate = 1 -- Arbitrary display update rate in seconds
 local dataDecay = 900 -- Data decays after 5 mins to ensure ram isnt filled
+local logicSuccess = false
 
 local devices = {}
 
@@ -26,17 +24,24 @@ local EnergyData = {
     output = 0,
     input60 = 0,
     output60 = 0,
-    timeUntilGeneric = 0, -- time until blank = "empty", "full", "generators on"
-    timeUntilString = "",
     generatorsMaxCapacity = false, -- generators on (polar), generators max capacity (scaling/backup), always (constant)
     thresholdForGenerators = 0, -- power threshold for when generators turn on
     peakInput = 0,
 }
 
-local function center(text)
-    local len = string.len(text)
-    return math.abs((len / 2) - (w / 2))
-end
+local DisplayData = {
+    stored = "",
+    percent = "",
+    input = "",
+    output = "",
+    avgInput = "",
+    avgOutput = "",
+    timeUntilGeneric = "",
+    timeUntilEmpty = "",
+    connectedBatteries = "",
+    ramUse = "",
+    warnings = {}
+}
 
 local function secondsToString(seconds)
     local time_days     = math.floor(seconds / 86400)
@@ -131,71 +136,68 @@ local function doLogic(uptime)
     elseif generatorsOnTick then
         EnergyData.thresholdForGenerators = EnergyData.stored
     end
-
-    local powerAbs = math.abs(EnergyData.input60 - EnergyData.output60) * 20
-    if EnergyData.input60 == EnergyData.output60 then
-        EnergyData.timeUntilString = "nil"
-        EnergyData.timeUntilGeneric = 0
-    elseif EnergyData.input60 > EnergyData.output60 then
-        EnergyData.timeUntilString = "Time until full:"
-        EnergyData.timeUntilGeneric = (EnergyData.max - EnergyData.stored) / powerAbs
-    elseif not EnergyData.generatorsMaxCapacity and EnergyData.thresholdForGenerators < EnergyData.stored then
-        EnergyData.timeUntilString = "Time until generators on:"
-        EnergyData.timeUntilGeneric = (EnergyData.stored - EnergyData.thresholdForGenerators) / powerAbs
-    elseif EnergyData.generatorsMaxCapacity and EnergyData.output60 > EnergyData.input60 then
-        EnergyData.timeUntilString = "Time until empty:"
-        EnergyData.timeUntilGeneric = EnergyData.stored / powerAbs
-    else
-        EnergyData.timeUntilString = "bad logic, consult evan"
-        EnergyData.timeUntilGeneric = 0
-    end
 end
 
-local function drawScreen(logicSuccess)
-    gpu.fill(1, 2, w, h, " ")
-
-    if not logicSuccess then
-        gpu.set(1, 3, "WARNING: Failed to obtain battery data.")
-        return
-    end
-
+local function updateDisplayData()
     local avgInput60 = getAverage(60, EnergyData.inputHistory)
     local avgOutput60 = getAverage(60, EnergyData.outputHistory)
 
-    gpu.set(1, 3, "Stored: " .. EnergyData.stored .. " / " .. EnergyData.max .. " EU")
-    gpu.set(1, 4, "Percent: " .. string.format("%.3f", EnergyData.percent) .. "%")
-    gpu.set(1, 5, "Input: " .. string.format("%.0f", EnergyData.input) .. " EU/t")
-    gpu.set(1, 6, "Output: " .. string.format("%.0f", EnergyData.output) .. " EU/t")
+    DisplayData.stored = "Stored: " .. EnergyData.stored .. " / " .. EnergyData.max .. " EU"
+    DisplayData.percent = "Percent: " .. string.format("%.3f", EnergyData.percent) .. "%"
+    DisplayData.input = "Input: " .. string.format("%.0f", EnergyData.input) .. " EU/t"
+    DisplayData.output = "Output: " .. string.format("%.0f", EnergyData.output) .. " EU/t"
+    DisplayData.avgInput = "Average Input: " .. string.format("%.0f", avgInput60) .. " EU/t over 1m"
+    DisplayData.avgOutput = "Average Output: " .. string.format("%.0f", avgOutput60) .. " EU/t over 1m"
 
-    gpu.set(1, 7, "Average Input: " .. string.format("%.0f", avgInput60) .. " EU/t over 1m")
-    gpu.set(1, 8, "Average Output: " .. string.format("%.0f", avgOutput60) .. " EU/t over 1m")
+    DisplayData.connectedBatteries = string.format("%d", #devices) .. " batter" .. (#devices > 1 and "ies" or "y") .. " connected"
+    DisplayData.ramUse = "Ram Use: " .. computer.totalMemory() - computer.freeMemory() .. "/" .. computer.totalMemory()
 
-    if EnergyData.timeUntilGeneric ~= 0 then
-      gpu.set(1, 9, EnergyData.timeUntilString .. " " .. secondsToString(EnergyData.timeUntilGeneric))
+    local powerAbs = math.abs(EnergyData.input60 - EnergyData.output60) * 20
+    if EnergyData.input60 == EnergyData.output60 then
+        DisplayData.timeUntilGeneric = ""
+    elseif EnergyData.input60 > EnergyData.output60 then
+        DisplayData.timeUntilGeneric = "Time until full: " .. secondsToString((EnergyData.max - EnergyData.stored) / powerAbs)
+    elseif not EnergyData.generatorsMaxCapacity and EnergyData.thresholdForGenerators < EnergyData.stored then
+        DisplayData.timeUntilGeneric = "Time until generators on: " .. secondsToString((EnergyData.stored - EnergyData.thresholdForGenerators) / powerAbs)
+    elseif EnergyData.generatorsMaxCapacity and EnergyData.output60 > EnergyData.input60 then
+        DisplayData.timeUntilGeneric = "Time until empty: ".. secondsToString(EnergyData.stored / powerAbs)
+    else
+        DisplayData.timeUntilGeneric = ""
     end
 
+    DisplayData.warnings = {}
+
     if avgOutput60 > avgInput60 and EnergyData.generatorsMaxCapacity then
-        gpu.set(1, 12, "WARNING: Output exceeds input")
+        table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
     end
 
     if EnergyData.percent < 5 then
-        gpu.set(1, 13, "WARNING: Low Power")
+        table.insert(DisplayData.warnings, "WARNING: Low Power")
     end
 
     if computer.freeMemory() < 20000 then
-        gpu.set(1, 14, "WARNING: Low RAM")
+        table.insert(DisplayData.warnings, "WARNING: Low RAM")
     end
 
-    gpu.set(1, h-1, string.format("%d", #devices) .. " batter" .. (#devices > 1 and "ies" or "y") .. " connected")
-    gpu.set(1, h, "Ram Use: " .. computer.totalMemory() - computer.freeMemory() .. "/" .. computer.totalMemory())
+    if screenutil.failedBind then
+        table.insert(DisplayData.warnings, "Warning: Failed to bind a screen to a gpu. Not sure what this means, tell evan if you see this.")
+    end
+
+    if screenutil.screenOverload then
+        table.insert(DisplayData.warnings, "WARNING: More screens present than GPUs.")
+    end
+
+    if not logicSuccess then
+        table.insert(DisplayData.warnings, "WARNING: Failed to obtain battery data.")
+    end
 end
 
 local function main()
+    screenutil.fetchScreenData()
     local lastDrawTime = 0
 
     while true do
         local uptime = computer.uptime()
-        local logicSuccess = false
 
         fetchDevices()
         if #devices ~= 0 then
@@ -203,7 +205,8 @@ local function main()
         end
 
         if uptime - lastDrawTime >= drawRate then
-            drawScreen(logicSuccess)
+            updateDisplayData()
+            screenutil.drawScreens(DisplayData)
             lastDrawTime = uptime
         end
 
@@ -215,14 +218,10 @@ local function main()
     end
 end
 
-gpu.fill(1, 1, w, h, " ")
-
-local title = "Evan's Power Monitor V1.1"
-gpu.set(center(title), 1, title)
-
 local success, err = pcall(main)
-gpu.fill(1, 1, w, h, " ")
+
+screenutil.resetBindings()
 
 if not success then
-    print("Encountered an error, consult Evan\n" .. os.date() .. "\n\n" .. err)
+    print("Encountered an error, consult Evan\n" .. os.date() .. "\n" .. err)
 end
