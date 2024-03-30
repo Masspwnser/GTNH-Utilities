@@ -4,9 +4,10 @@ local devinfo = computer.getDeviceInfo()
 
 local screenutil = {}
 screenutil.screens = {}
-screenutil.gpus = {}
 screenutil.failedBind = false
 screenutil.screenOverload = false
+
+local screenProxies = {}
 
 local color = {}
 color["red"] = 0xE74C3C
@@ -20,20 +21,34 @@ local function compare(comp1, comp2)
     return tonumber(devinfo[comp1.address].capacity) > tonumber(devinfo[comp2.address].capacity)
 end
 
-local function center(text, gpu)
-    local w, h = gpu.getResolution()
+local function center(text, screen)
     local len = string.len(text)
-    return math.abs((len / 2) - (w / 2))
+    return math.abs((len / 2) - (screen.getWidth() / 2))
 end
 
-local function getMaxRes(capacity)
-    if capacity == "8000" then
-        return 160, 50
-    elseif capacity == "2000" then
-        return 80, 25
-    else
-        return 50, 16
+local function drawPowerMonitor(DisplayData, screen)
+    screen.setResolution(60, 19)
+
+    local title = "Power Monitor V1.1"
+    screen.drawText(center(title, screen), 1, color["white"], title, 0)
+
+    screen.drawText(1, 3, color["white"], DisplayData.stored, 0)
+    screen.drawText(1, 4, color["white"], DisplayData.percent, 0)
+    screen.drawText(1, 5, color["white"], DisplayData.input, 0)
+    screen.drawText(1, 6, color["white"], DisplayData.output, 0)
+
+    screen.drawText(1, 7, color["white"], DisplayData.avgInput, 0)
+    screen.drawText(1, 8, color["white"], DisplayData.avgOutput, 0)
+    screen.drawText(1, 9, color["white"], DisplayData.timeUntilGeneric, 0)
+
+    for index, warning in ipairs(DisplayData.warnings) do
+        screen.drawText(1, index + 10, color["white"], warning, 0)
     end
+
+    screen.drawText(1, h-1, color["white"], DisplayData.connectedBatteries, 0)
+    screen.drawText(1, h, color["white"], DisplayData.ramUse, 0)
+
+    screen.update()
 end
 
 -- Get screens, gpus, and bind them as best you can
@@ -41,9 +56,9 @@ function screenutil.fetchScreenData()
     devinfo = computer.getDeviceInfo()
     local anyFailedBind = false
 
-    screenutil.screens = {}
+    screensProxies = {}
     for address, name in component.list("screen", false) do
-        table.insert(screenutil.screens, component.proxy(address))
+        table.insert(screensProxies, component.proxy(address))
     end
 
     screenutil.gpus = {}
@@ -56,44 +71,25 @@ function screenutil.fetchScreenData()
         os.exit()
     end
 
-    table.sort(screenutil.screens, compare)
+    table.sort(screensProxies, compare)
     table.sort(screenutil.gpus, compare)
 
     component.setPrimary("gpu", screenutil.gpus[1].address)
-    if #screenutil.screens ~= 0 then
-      component.setPrimary("screen", screenutil.screens[1].address)
+    if #screensProxies ~= 0 then
+      component.setPrimary("screen", screensProxies[1].address)
     end
 
-    screenutil.screenOverload = #screenutil.screens > #screenutil.gpus
+    screenutil.screenOverload = #screensProxies > #screenutil.gpus
 
     for index, igpu in pairs(screenutil.gpus) do
-        if index > #screenutil.screens then
+        if index > #screensProxies then
             break
         end
-        if not igpu.bind(screenutil.screens[index].address) then
-            anyFailedBind = true
-        else
-            local screenMaxWidth, screenMaxHeight = getMaxRes(devinfo[screenutil.screens[index].address].capacity)
-            local gpuMaxWidth, gpuMaxHeight = igpu.maxResolution()
-            local blocksW, blocksH = screenutil.screens[index].getAspectRatio()
-
-            local width = math.min(screenMaxWidth, gpuMaxWidth)
-            local height = math.min(screenMaxHeight, gpuMaxHeight)
-
-            -- figure this shit out
-            if width >= 160 then
-                igpu.setResolution(60, 19)
-            elseif width >= 80 then
-                igpu.setResolution(60, 19)
-            else
-                igpu.setResolution(width, height)
-            end
-
-            igpu.colorCapable = height >= 150
-            if igpu.colorCapable then
-                igpu.setBackground(0x1f1f29)
-            end
-        end
+        local screenInstance = dofile("/home/evan/external/Screen.lua")
+        screenInstance.setGPUAddress(igpu.address)
+        screenInstance.setScreenAddress(screensProxies[index].address, false)
+        screenInstance.flush()
+        table.insert(screenutil.screens, screenInstance)
     end
 
     -- Try not to change failedBind too rapidly between update cycles
@@ -102,39 +98,22 @@ end
 
 function screenutil.drawScreens(DisplayData)
 
-    for index, gpu in pairs(screenutil.gpus) do
-        if index > #screenutil.screens then
+    for index, screen in pairs(screenutil.screens) do
+        if index > #screensProxies then
             break
         end
-
-        local title = "Power Monitor V1.1"
-        local w, h = gpu.getResolution()
-
-        gpu.fill(1, 1, w, h, " ")
-        gpu.set(center(title, gpu), 1, title)
-
-        gpu.set(1, 3, DisplayData.stored)
-        gpu.set(1, 4, DisplayData.percent)
-        gpu.set(1, 5, DisplayData.input)
-        gpu.set(1, 6, DisplayData.output)
-
-        gpu.set(1, 7, DisplayData.avgInput)
-        gpu.set(1, 8, DisplayData.avgOutput)
-
-        for index, warning in ipairs(DisplayData.warnings) do
-            gpu.set(1, index + 9, warning)
-        end
-
-        gpu.set(1, h-1, DisplayData.connectedBatteries)
-        gpu.set(1, h, DisplayData.ramUse)
-
+        -- Insert switch for other screens
+        drawPowerMonitor(DisplayData, screen)
     end
 end
 
 function screenutil.resetBindings()
-    local w, h = component.gpu.getResolution()
-    component.gpu.fill(1, 1, w, h, " ")
-    component.gpu.bind(component.screen.address)
+    --[[
+    for index, screen in pairs(screenutil.screens) do
+        screen.setScreenAddress(component.screen.address, true)
+        screen.setGPUAddress(component.gpu.address)
+    end
+    --]]
 end
 
 
