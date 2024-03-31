@@ -59,31 +59,26 @@ end
 -- Get screens, gpus, and bind them as best you can
 function ScreenUtil.fetchScreenData()
 
-    -- First time, fetch GPU data. GPU's are not dynamic like screens are (or should be at least)
-    if #gpus == 0 then
-        for address, name in component.list("gpu", false) do
-            table.insert(gpus, component.proxy(address))
-        end
-        table.sort(gpus, compare)
+    gpus = {}
+    for address, name in component.list("gpu", false) do
+        table.insert(gpus, component.proxy(address))
     end
+    table.sort(gpus, compare)
 
     -- TODO Make screens dynamic
-    if #screens == 0 then
-        for address, name in component.list("screen", false) do
-            table.insert(screens, component.proxy(address))
-        end
-        table.sort(screens, compare)
+    screens = {}
+    for address, name in component.list("screen", false) do
+        table.insert(screens, component.proxy(address))
     end
 
-    for index, igpu in pairs(gpus) do
+    displays = {}
+    for index, gpu in pairs(gpus) do
         if index > #screens then
             break
         end
         local display = dofile("external/Screen.lua")
-        display.setGPUAddress(igpu.address)
+        display.setGPUAddress(gpu.address)
         display.setScreenAddress(screens[index].address, true)
-        display.clear()
-        display.update()
         table.insert(displays, display)
     end
 end

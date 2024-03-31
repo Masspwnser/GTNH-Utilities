@@ -12,6 +12,9 @@ local drawRate = 1 -- Arbitrary display update rate in seconds
 local dataDecay = 900 -- Data decays after 5 mins to ensure ram isnt filled
 local batteries = {}
 
+local logicSuccess = false
+local drawSuccess = false
+
 local EnergyData = {
     inputHistory = {},
     outputHistory = {},
@@ -172,22 +175,31 @@ local function getDisplayData()
         table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
     end
 
+    if not logicSuccess then
+        table.insert(DisplayData.warnings, "WARNING: Logic error")
+    end
+
+    if not drawSuccess then
+        table.insert(DisplayData.warnings, "WARNING: Draw error")
+    end
+
     return DisplayData
 end
 
 local function main()
     local lastDrawTime = 0
-    ScreenUtil.fetchScreenData() -- TODO make screen data dynamic
+
+    ScreenUtil.fetchScreenData() -- TODO make dynamic
 
     while true do
         local uptime = computer.uptime()
 
         fetchBatteries()
-        pcall(doLogic, uptime)
+        logicSuccess = pcall(doLogic, uptime)
 
         if uptime - lastDrawTime >= drawRate then
             lastDrawTime = uptime
-            pcall(ScreenUtil.drawScreens, getDisplayData())
+            drawSuccess = pcall(ScreenUtil.drawScreens, getDisplayData())
         end
 
         -- TODO add signal detection logic
@@ -204,5 +216,11 @@ local success, err = pcall(main)
 pcall(ScreenUtil.resetScreens)
 
 if not success then
+    if not logicSuccess then
+        print("Exited with logic error")
+    end
+    if not drawSuccess then
+        print("Exited with draw error")
+    end
     print("Encountered an error, consult Evan\n" .. os.date() .. "\n" .. err)
 end
