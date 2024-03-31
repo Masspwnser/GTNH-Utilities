@@ -3,16 +3,14 @@ local os = require("os")
 local keyboard = require("keyboard")
 local component = require("component")
 local computer = require("computer")
-local screenutil = require("screenutil")
+local ScreenUtil = require("ScreenUtil")
 
 local tickRate = 0.05 -- Minecraft tickrate in seconds
 
 local logicRate = tickRate -- Frequency to poll power data
 local drawRate = 1 -- Arbitrary display update rate in seconds
 local dataDecay = 900 -- Data decays after 5 mins to ensure ram isnt filled
-local logicSuccess = false
-
-local devices = {}
+local batteries = {}
 
 local EnergyData = {
     inputHistory = {},
@@ -27,20 +25,6 @@ local EnergyData = {
     generatorsMaxCapacity = false, -- generators on (polar), generators max capacity (scaling/backup), always (constant)
     thresholdForGenerators = 0, -- power threshold for when generators turn on
     peakInput = 0,
-}
-
-local DisplayData = {
-    stored = "",
-    percent = "",
-    input = "",
-    output = "",
-    avgInput = "",
-    avgOutput = "",
-    timeUntilGeneric = "",
-    timeUntilEmpty = "",
-    connectedBatteries = "",
-    ramUse = "",
-    warnings = {}
 }
 
 local function secondsToString(seconds)
@@ -84,13 +68,13 @@ local function getAverage(time, history)
     return sum / numPolled
 end
 
-local function fetchDevices()
+local function fetchBatteries()
     local proxy
-    devices = {}
+    batteries = {}
     for address, name in component.list("gt_machine", true) do
         proxy = component.proxy(address)
         if proxy ~= nil then
-            table.insert(devices, proxy)
+            table.insert(batteries, proxy)
         end
     end
 end
@@ -101,7 +85,7 @@ local function doLogic(uptime)
     local aggInput = 0
     local aggOutput = 0
 
-    for index, device in pairs(devices) do
+    for index, device in pairs(batteries) do
         aggStored = aggStored + device.getEUStored()
         aggMax = aggMax + device.getEUCapacity()
         aggInput = aggInput + device.getEUInputAverage()
@@ -122,7 +106,7 @@ local function doLogic(uptime)
         EnergyData.peakInput = EnergyData.input60
     end
     
-    EnergyData.percent = (EnergyData.stored / EnergyData.max) * 100;
+    EnergyData.percent = EnergyData.max ~= 0 and (EnergyData.stored / EnergyData.max) * 100 or 0;
 
     local generatorsOnLastCycle = EnergyData.generatorsMaxCapacity
 
@@ -138,9 +122,10 @@ local function doLogic(uptime)
     end
 end
 
-local function updateDisplayData()
+local function getDisplayData()
     local avgInput60 = getAverage(60, EnergyData.inputHistory)
     local avgOutput60 = getAverage(60, EnergyData.outputHistory)
+    local DisplayData = {}
 
     DisplayData.stored = "Stored: " .. EnergyData.stored .. " / " .. EnergyData.max .. " EU"
     DisplayData.percent = "Percent: " .. string.format("%.3f", EnergyData.percent) .. "%"
@@ -149,11 +134,11 @@ local function updateDisplayData()
     DisplayData.avgInput = "Average Input: " .. string.format("%.0f", avgInput60) .. " EU/t over 1m"
     DisplayData.avgOutput = "Average Output: " .. string.format("%.0f", avgOutput60) .. " EU/t over 1m"
 
-    DisplayData.connectedBatteries = string.format("%d", #devices) .. " batter" .. (#devices > 1 and "ies" or "y") .. " connected"
-    DisplayData.ramUse = "Ram Use: " .. computer.totalMemory() - computer.freeMemory() .. "/" .. computer.totalMemory()
+    DisplayData.connectedBatteries = "BAT: " .. string.format("%d", #batteries)
+    DisplayData.ramUse = "RAM: " .. string.format("%2.f", ((computer.totalMemory() - computer.freeMemory()) / computer.totalMemory()) * 100) .. "%"
 
     local powerAbs = math.abs(EnergyData.input60 - EnergyData.output60) * 20
-    if EnergyData.input60 == EnergyData.output60 then
+    if EnergyData.input60 == EnergyData.output60 or #batteries == 0 then
         DisplayData.timeUntilGeneric = ""
     elseif EnergyData.input60 > EnergyData.output60 then
         DisplayData.timeUntilGeneric = "Time until full: " .. secondsToString((EnergyData.max - EnergyData.stored) / powerAbs)
@@ -167,49 +152,45 @@ local function updateDisplayData()
 
     DisplayData.warnings = {}
 
-    if avgOutput60 > avgInput60 and EnergyData.generatorsMaxCapacity then
-        table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
-    end
-
-    if EnergyData.percent < 5 then
-        table.insert(DisplayData.warnings, "WARNING: Low Power")
-    end
-
     if computer.freeMemory() < 20000 then
         table.insert(DisplayData.warnings, "WARNING: Low RAM")
     end
 
-    if screenutil.failedBind then
-        table.insert(DisplayData.warnings, "Warning: Failed to bind a screen to a gpu. Not sure what this means, tell evan if you see this.")
+    if ScreenUtil.screenOverload() then
+        table.insert(DisplayData.warnings, "WARNING: More screens than GPUs")
     end
 
-    if screenutil.screenOverload then
-        table.insert(DisplayData.warnings, "WARNING: More screens present than GPUs.")
+    if not batteries or #batteries == 0 then
+        table.insert(DisplayData.warnings, "WARNING: Failed to obtain battery data")
+    elseif EnergyData.percent == 0 then
+        table.insert(DisplayData.warnings, "WARNING: No Power")
+    elseif EnergyData.percent < 5 then
+        table.insert(DisplayData.warnings, "WARNING: Low Power")
     end
 
-    if not logicSuccess then
-        table.insert(DisplayData.warnings, "WARNING: Failed to obtain battery data.")
+    if avgOutput60 > avgInput60 and EnergyData.generatorsMaxCapacity then
+        table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
     end
+
+    return DisplayData
 end
 
 local function main()
-    screenutil.fetchScreenData()
     local lastDrawTime = 0
+    ScreenUtil.fetchScreenData() -- TODO make screen data dynamic
 
     while true do
         local uptime = computer.uptime()
 
-        fetchDevices()
-        if #devices ~= 0 then
-            logicSuccess = pcall(doLogic, uptime)
-        end
+        fetchBatteries()
+        pcall(doLogic, uptime)
 
         if uptime - lastDrawTime >= drawRate then
-            updateDisplayData()
-            screenutil.drawScreens(DisplayData)
             lastDrawTime = uptime
+            pcall(ScreenUtil.drawScreens, getDisplayData())
         end
 
+        -- TODO add signal detection logic
         if keyboard.isShiftDown() then
             return
         end
@@ -220,7 +201,7 @@ end
 
 local success, err = pcall(main)
 
-screenutil.resetBindings()
+pcall(ScreenUtil.resetScreens)
 
 if not success then
     print("Encountered an error, consult Evan\n" .. os.date() .. "\n" .. err)
