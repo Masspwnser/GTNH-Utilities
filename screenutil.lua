@@ -45,8 +45,8 @@ local function drawPowerMonitor(DisplayData, screen)
         screen.drawText(1, index + 10, color["white"], warning, 0)
     end
 
-    screen.drawText(1, h-1, color["white"], DisplayData.connectedBatteries, 0)
-    screen.drawText(1, h, color["white"], DisplayData.ramUse, 0)
+    screen.drawText(1, screen.getHeight()-1, color["white"], DisplayData.connectedBatteries, 0)
+    screen.drawText(1, screen.getHeight(), color["white"], DisplayData.ramUse, 0)
 
     screen.update()
 end
@@ -87,8 +87,9 @@ function screenutil.fetchScreenData()
         end
         local screenInstance = dofile("/home/evan/external/Screen.lua")
         screenInstance.setGPUAddress(igpu.address)
-        screenInstance.setScreenAddress(screensProxies[index].address, false)
-        screenInstance.flush()
+        screenInstance.setScreenAddress(screensProxies[index].address, true)
+        screenInstance.clear()
+        screenInstance.update()
         table.insert(screenutil.screens, screenInstance)
     end
 
@@ -108,12 +109,10 @@ function screenutil.drawScreens(DisplayData)
 end
 
 function screenutil.resetBindings()
-    --[[
     for index, screen in pairs(screenutil.screens) do
-        screen.setScreenAddress(component.screen.address, true)
         screen.setGPUAddress(component.gpu.address)
+        screen.setScreenAddress(component.screen.address, true)
     end
-    --]]
 end
 
 
