@@ -2,7 +2,10 @@ local component = require("component")
 local computer = require("computer")
 local Logger = require("Logger")
 local deviceInfo = computer.getDeviceInfo()
-local adminScreen = "62c0ba71-8443-407f-89f9-58b10fedc372"
+local adminTerminal = "62c0ba71-8443-407f-89f9-58b10fedc372"
+local secondaryTerminals = {
+    "c9b69273-fd13-4ff0-8f43-3ae3b0c5abfe"
+}
 
 local ScreenUtil = {}
 
@@ -23,6 +26,9 @@ local color = {
 
 -- Compare two components by tier, ex: 3 > 2, so 3 comes first
 local function compare(comp1, comp2)
+    if comp1.address == adminTerminal or comp2.address == adminTerminal then
+        return comp1.address == adminTerminal
+    end
     return tonumber(deviceInfo[comp1.address].capacity) > tonumber(deviceInfo[comp2.address].capacity)
 end
 
@@ -76,6 +82,9 @@ function ScreenUtil.fetchScreenData()
     end
     table.sort(screens, compare)
 
+    component.setPrimary("screen", adminTerminal)
+    component.setPrimary("gpu", gpus[1].address)
+
     displays = {}
     for index, gpu in pairs(gpus) do
         if index > #screens then
@@ -86,12 +95,11 @@ function ScreenUtil.fetchScreenData()
         Logger.log("Creating new display, details below:")
         Logger.log("GPU: " .. gpu.address .. " linked to Screen: " .. screens[index].address)
         display.setGPUAddress(gpu.address)
-        Logger.log("Set GPU address without dying!")
         display.setScreenAddress(screens[index].address, true)
-        Logger.log("Set Screen address without dying!")
         table.insert(displays, display)
-        Logger.log("Finished creation of aforementioned display without dying")
+        Logger.log("Finished creation of display #" .. index .. " without dying")
     end
+    Logger.log("Finished fetching screen data")
 end
 
 function ScreenUtil.drawScreens(DisplayData)
@@ -109,17 +117,17 @@ function ScreenUtil.resetScreens()
         display.clear()
 
         -- Secondary displays are notified, as they cannot access the terminal
-        if display.getScreenAddress() ~= adminScreen then
-            display.drawText(1, 4, color["white"], "The power monitor is off.", 0)
-            display.drawText(1, 5, color["white"], "Reboot the server to re-enable.", 0)
+        if display.getScreenAddress() ~= adminTerminal then
+            display.drawText(1, 1, color["white"], "The power monitor is off.", 0)
+            display.drawText(1, 2, color["white"], "Reboot the server to re-enable.", 0)
         end
 
         display.update()
     end
 
     -- Admin terminal gets the gpu
-    Logger.log("Binding primary GPU " .. component.gpu.address .. " to Admin Screen " .. adminScreen)
-    component.gpu.bind(adminScreen, false)
+    Logger.log("Binding primary GPU " .. component.gpu.address .. " to Admin Screen " .. adminTerminal)
+    component.gpu.bind(adminTerminal, true)
 end
 
 function ScreenUtil.screenOverload()

@@ -231,6 +231,7 @@ pcall(ScreenUtil.resetScreens)
 Logger.log("Exiting application")
 if not success then
     Logger.log("Exited with error: " .. err)
+    print("Exited with error: " .. err)
 end
 -- TODO Print logs to screen
 Logger.close()
