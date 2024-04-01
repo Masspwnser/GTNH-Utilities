@@ -4,6 +4,7 @@ local keyboard = require("keyboard")
 local component = require("component")
 local computer = require("computer")
 local ScreenUtil = require("ScreenUtil")
+local Logger = require("Logger")
 
 local tickRate = 0.05 -- Minecraft tickrate in seconds
 
@@ -189,6 +190,9 @@ end
 local function main()
     local lastDrawTime = 0
 
+    Logger.enableLogging()
+    Logger.log("Starting power monitor")
+
     ScreenUtil.fetchScreenData() -- TODO make dynamic
 
     while true do
@@ -204,6 +208,7 @@ local function main()
 
         -- TODO add signal detection logic
         if keyboard.isShiftDown() then
+            Logger.log("Exiting per escape sequence")
             return
         end
 
@@ -214,6 +219,7 @@ end
 local success, err = pcall(main)
 
 pcall(ScreenUtil.resetScreens)
+Logger.close()
 
 if not success then
     if not logicSuccess then

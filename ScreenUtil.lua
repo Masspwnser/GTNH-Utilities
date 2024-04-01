@@ -1,5 +1,6 @@
 local component = require("component")
 local computer = require("computer")
+local Logger = require("Logger")
 local deviceInfo = computer.getDeviceInfo()
 local adminScreen = "62c0ba71-8443-407f-89f9-58b10fedc372"
 
@@ -58,9 +59,11 @@ end
 
 -- Get screens, gpus, and bind them as best you can
 function ScreenUtil.fetchScreenData()
+    Logger.log("Fetching screen data")
 
     gpus = {}
     for address, name in component.list("gpu", false) do
+        Logger.log("Discovered GPU: " .. address)
         table.insert(gpus, component.proxy(address))
     end
     table.sort(gpus, compare)
@@ -68,23 +71,26 @@ function ScreenUtil.fetchScreenData()
     -- TODO Make screens dynamic
     screens = {}
     for address, name in component.list("screen", false) do
+        Logger.log("Discovered Screen: " .. address)
         table.insert(screens, component.proxy(address))
     end
+    table.sort(screens, compare)
 
     displays = {}
     for index, gpu in pairs(gpus) do
         if index > #screens then
+            Logger.log("More GPUs than screens, exiting bind loop")
             break
         end
         local display = dofile("external/Screen.lua")
         display.setGPUAddress(gpu.address)
         display.setScreenAddress(screens[index].address, true)
         table.insert(displays, display)
+        Logger.log("Created new display. " .. display.getScreenAddress() .. " linked to GPU " .. display.getGPUAddress())
     end
 end
 
 function ScreenUtil.drawScreens(DisplayData)
-
     for index, display in pairs(displays) do
         -- TODO Insert switch for other displays
         drawPowerMonitor(DisplayData, display)
@@ -94,6 +100,7 @@ end
 -- Return to a good GPU/Screen state
 function ScreenUtil.resetScreens()
     for index, display in pairs(displays) do
+        Logger.log("Resetting display. " .. display.getScreenAddress() .. " linked to GPU " .. display.getGPUAddress())
         display.setResolution(display.getMaxResolution())
         display.clear()
 
@@ -107,6 +114,7 @@ function ScreenUtil.resetScreens()
     end
 
     -- Admin terminal gets the gpu
+    Logger.log("Binding primary GPU " .. component.gpu.address .. " to Admin Screen " .. adminScreen)
     component.gpu.bind(adminScreen, false)
 end
 
