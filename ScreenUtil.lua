@@ -83,10 +83,14 @@ function ScreenUtil.fetchScreenData()
             break
         end
         local display = dofile("external/Screen.lua")
+        Logger.log("Creating new display, details below:")
+        Logger.log("GPU: " .. gpu.address .. " linked to Screen: " .. screens[index].address)
         display.setGPUAddress(gpu.address)
+        Logger.log("Set GPU address without dying!")
         display.setScreenAddress(screens[index].address, true)
+        Logger.log("Set Screen address without dying!")
         table.insert(displays, display)
-        Logger.log("Created new display. " .. display.getScreenAddress() .. " linked to GPU " .. display.getGPUAddress())
+        Logger.log("Finished creation of aforementioned display without dying")
     end
 end
 

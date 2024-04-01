@@ -206,6 +206,14 @@ local function main()
             drawSuccess = pcall(ScreenUtil.drawScreens, getDisplayData())
         end
 
+        if not logicSuccess then
+            Logger.log("Logic exited with failure")
+        end
+
+        if not drawSuccess then
+            Logger.log("Drawing exited with failure")
+        end
+
         -- TODO add signal detection logic
         if keyboard.isShiftDown() then
             Logger.log("Exiting per escape sequence")
@@ -219,14 +227,10 @@ end
 local success, err = pcall(main)
 
 pcall(ScreenUtil.resetScreens)
-Logger.close()
 
+Logger.log("Exiting application")
 if not success then
-    if not logicSuccess then
-        print("Exited with logic error")
-    end
-    if not drawSuccess then
-        print("Exited with draw error")
-    end
-    print("Encountered an error, consult Evan\n" .. os.date() .. "\n" .. err)
+    Logger.log("Exited with error: " .. err)
 end
+-- TODO Print logs to screen
+Logger.close()
