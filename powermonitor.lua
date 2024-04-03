@@ -187,42 +187,54 @@ local function getDisplayData()
     return DisplayData
 end
 
+local function processSignal(name, arg1, arg2, arg3)
+    if name == "component_added" or name == "component_removed" then
+        if arg2 == "gt_machine" then
+            fetchBatteries()
+        elseif arg2 == "screen" or arg2 == "gpu" then
+            ScreenUtil.fetchScreenData()
+        end
+    elseif name == "touch" then
+        ScreenUtil.processTouch(arg1, arg2, arg3)
+    end
+end
+
 local function main()
     local lastDrawTime = 0
 
     Logger.enableLogging()
     Logger.log("Starting power monitor")
 
-    ScreenUtil.fetchScreenData() -- TODO make dynamic
-
     while true do
         local uptime = computer.uptime()
+        local logicErr, drawErr
 
-        fetchBatteries()
-        logicSuccess = pcall(doLogic, uptime)
+        logicSuccess, logicErr = pcall(doLogic, uptime)
 
         if uptime - lastDrawTime >= drawRate then
             lastDrawTime = uptime
-            drawSuccess = pcall(ScreenUtil.drawScreens, getDisplayData())
+            drawSuccess, drawErr = pcall(ScreenUtil.drawScreens, getDisplayData())
         end
 
         if not logicSuccess then
-            Logger.log("Logic exited with failure")
+            Logger.log("Logic exited with error: " .. logicErr)
         end
 
         if not drawSuccess then
-            Logger.log("Drawing exited with failure")
+            Logger.log("Drawing exited with error: " .. drawErr)
         end
+
+        processSignal(computer.pullSignal(logicRate))
 
         -- TODO add signal detection logic
         if keyboard.isShiftDown() then
-            Logger.log("Exiting per escape sequence")
+            Logger.log("Hit escape sequence, exiting")
             return
         end
-
-        os.sleep(logicRate)
     end
 end
+
+os.sleep(5)
 
 local success, err = pcall(main)
 

@@ -3,6 +3,7 @@ local computer = require("computer")
 local Logger = require("Logger")
 local deviceInfo = computer.getDeviceInfo()
 local adminTerminal = "62c0ba71-8443-407f-89f9-58b10fedc372"
+local adminKeyboard = "b462c75a-3756-4f83-8f56-29b931a6986a"
 local secondaryTerminals = {
     "c9b69273-fd13-4ff0-8f43-3ae3b0c5abfe"
 }
@@ -92,12 +93,14 @@ function ScreenUtil.fetchScreenData()
             break
         end
         local display = dofile("external/Screen.lua")
-        Logger.log("Creating new display, details below:")
-        Logger.log("GPU: " .. gpu.address .. " linked to Screen: " .. screens[index].address)
-        display.setGPUAddress(gpu.address)
-        display.setScreenAddress(screens[index].address, true)
+        Logger.log("Creating new display. GPU: " .. gpu.address .. " linked to Screen: " .. screens[index].address)
+        local gpuSuccess, gpuErr = pcall(display.setGPUAddress, gpu.address)
+        local screenSuccess, screenErr = pcall(display.setScreenAddress, screens[index].address, true)
         table.insert(displays, display)
-        Logger.log("Finished creation of display #" .. index .. " without dying")
+        
+        if not gpuSuccess or not screenSuccess then
+            Logger.log("WARNING: " .. ((not gpuSuccess) and ("Error setting GPU: " .. gpuErr) or ("Error setting Screen address: " .. screenErr)))
+        end
     end
     Logger.log("Finished fetching screen data")
 end
@@ -126,12 +129,20 @@ function ScreenUtil.resetScreens()
     end
 
     -- Admin terminal gets the gpu
-    Logger.log("Binding primary GPU " .. component.gpu.address .. " to Admin Screen " .. adminTerminal)
+    Logger.log("Resetting primary devices to prioritize admin terminal")
+    component.screen.setPrimary(adminTerminal)
+    component.keyboard.setPrimary(adminKeyboard)
+    component.gpu.setPrimary(gpus[1])
     component.gpu.bind(adminTerminal, true)
 end
 
 function ScreenUtil.screenOverload()
     return #screens > #gpus
+end
+
+function ScreenUtil.processTouch(address, x, y)
+    Logger.log("Got signal: " .. name)
+    
 end
 
 return ScreenUtil
