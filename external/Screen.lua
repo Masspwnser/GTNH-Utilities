@@ -2,6 +2,7 @@
 local color = require("external.Color")
 local component = require("component")
 local unicode = require("unicode")
+local Logger = require("Logger")
 
 --------------------------------------------------------------------------------
 
@@ -914,6 +915,68 @@ local function update(force)
 end
 
 --------------------------------------------------------------------------------
+-- Evan's Additions
+local buttons = {}
+local selectedTab = "oldMonitor"
+
+local function center(text, leftBound, rightBound)
+	if not leftBound then
+		leftBound = 1
+	end
+	if not rightBound then
+		rightBound = getWidth()
+	end
+	local centerPoint = ((rightBound - leftBound) / 2) + leftBound
+    local textLength = string.len(text)
+    return math.floor(math.abs(centerPoint - (textLength / 2)))
+end
+
+-- Height must be an even number to preserve centering
+local function makeButton(x, y, width, height, background, foreground, text, id, tabSelection)
+	if not id or not x or not y then
+		Logger.log("Incomplete params on the button")
+	end
+	if not background then
+		background = 0x000000;
+	end
+	if not foreground then
+		foreground = 0xFFFFFF;
+	end
+	drawSemiPixelRectangle(x, y, width, height, background)
+	-- drawRectangle(x, y, width, height, background, 0x000000, " ", 0)
+	if text and text ~= "" then
+		local xpos = center(text, x, x+width)
+		local ypos = math.floor((y/2) + (height/4))
+	    drawText(xpos, ypos, foreground, text, 0)
+	end
+	buttons[id] = {
+		id = id,
+		x = x,
+		y = y,
+		width = width,
+		height = height,
+		selectedTab = tabSelection
+	}
+end
+
+local function processTouch(x, y)
+	y = y * 2 -- adjust for double-pixel
+	for index, button in pairs(buttons) do
+		if x >= button.x and x <= ((button.x - 1) + button.width) and
+		y >= button.y and y <= ((button.y - 1) + button.height) then
+			Logger.log("Button was selected, id: \"" .. button.id .. "\" (" .. button.x .. ", " .. button.y .. ") w: " .. button.width .. " h: " .. button.height)
+			selectedTab = button.selectedTab
+			return true
+		end
+	end
+	return false
+end
+
+local function getSelectedTab()
+	return selectedTab
+end
+
+--------------------------------------------------------------------------------
 
 return {
 	getIndex = getIndex,
@@ -970,4 +1033,10 @@ return {
 	drawSemiPixelLine = drawSemiPixelLine,
 	drawSemiPixelEllipse = drawSemiPixelEllipse,
 	drawSemiPixelCurve = drawSemiPixelCurve,
+
+	-- Evan's Additions
+	makeButton = makeButton,
+	processTouch = processTouch,
+	center = center,
+	getSelectedTab = getSelectedTab,
 }

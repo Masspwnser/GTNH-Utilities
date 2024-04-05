@@ -13,9 +13,6 @@ local drawRate = 1 -- Arbitrary display update rate in seconds
 local dataDecay = 900 -- Data decays after 5 mins to ensure ram isnt filled
 local batteries = {}
 
-local logicSuccess = false
-local drawSuccess = false
-
 local EnergyData = {
     inputHistory = {},
     outputHistory = {},
@@ -176,14 +173,6 @@ local function getDisplayData()
         table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
     end
 
-    if not logicSuccess then
-        table.insert(DisplayData.warnings, "WARNING: Logic error")
-    end
-
-    if not drawSuccess then
-        table.insert(DisplayData.warnings, "WARNING: Draw error")
-    end
-
     return DisplayData
 end
 
@@ -201,30 +190,34 @@ end
 
 local function main()
     local lastDrawTime = 0
-
     Logger.enableLogging()
     Logger.log("Starting power monitor")
 
+    fetchBatteries()
+    ScreenUtil.fetchScreenData()
+
     while true do
         local uptime = computer.uptime()
-        local logicErr, drawErr
 
-        logicSuccess, logicErr = pcall(doLogic, uptime)
+        local logicSuccess, logicErr = pcall(doLogic, uptime)
+        local signalSuccess, signalErr = pcall(processSignal, computer.pullSignal(logicRate))
 
         if uptime - lastDrawTime >= drawRate then
             lastDrawTime = uptime
-            drawSuccess, drawErr = pcall(ScreenUtil.drawScreens, getDisplayData())
+            local drawSuccess, drawErr = pcall(ScreenUtil.drawScreens, getDisplayData())
+
+            if not drawSuccess then
+                Logger.log("Drawing exited with error: " .. drawErr)
+            end
         end
 
         if not logicSuccess then
             Logger.log("Logic exited with error: " .. logicErr)
         end
 
-        if not drawSuccess then
-            Logger.log("Drawing exited with error: " .. drawErr)
+        if not signalSuccess then
+            Logger.log("Signal pull exited with error: " .. signalErr)
         end
-
-        processSignal(computer.pullSignal(logicRate))
 
         -- TODO add signal detection logic
         if keyboard.isShiftDown() then
@@ -234,7 +227,7 @@ local function main()
     end
 end
 
-os.sleep(5)
+os.sleep(1)
 
 local success, err = pcall(main)
 

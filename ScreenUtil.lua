@@ -8,21 +8,18 @@ local secondaryTerminals = {
     "c9b69273-fd13-4ff0-8f43-3ae3b0c5abfe"
 }
 
-local ScreenUtil = {}
-
 local gpus = {}
 local screens = {}
 local displays = {} -- Screen/GPU pairs
-
-ScreenUtil.failedBind = false
-ScreenUtil.screenOverload = false
+local buttons = {}
 
 local color = {
     red=0xE74C3C,
     yellow=0xF4D03F,
     green=0x58D68D,
     blue=0x3498DB,
-    white=0xFFFFFF
+    white=0xFFFFFF,
+    orange=0xDB5704
 }
 
 -- Compare two components by tier, ex: 3 > 2, so 3 comes first
@@ -33,17 +30,12 @@ local function compare(comp1, comp2)
     return tonumber(deviceInfo[comp1.address].capacity) > tonumber(deviceInfo[comp2.address].capacity)
 end
 
-local function center(text, display)
-    local len = string.len(text)
-    return math.abs((len / 2) - (display.getWidth() / 2))
-end
-
-local function drawPowerMonitor(DisplayData, display)
-    display.setResolution(60, 19)
+local function drawNewPowerMonitor(DisplayData, display)
+    display.setResolution(160, 50)
     display.clear()
 
     local title = "Power Monitor V1.2"
-    display.drawText(center(title, display), 1, color["white"], title, 0)
+    display.drawText(display.center(title), 1, color["white"], title, 0)
 
     local sidebarText = DisplayData.ramUse .. " " .. DisplayData.connectedBatteries
     display.drawText(display.getWidth() - string.len(sidebarText), 1, color["white"], sidebarText, 0)
@@ -61,11 +53,43 @@ local function drawPowerMonitor(DisplayData, display)
         display.drawText(1, index + 10, color["white"], warning, 0)
     end
 
+    local buttonHeight = 4
+    display.makeButton(1, (display.getHeight() * 2) - buttonHeight, 20, buttonHeight, color["orange"], color["white"], "OLD SCREEN", "buttonbar1", "oldMonitor")
+
+    display.update()
+end
+
+local function drawPowerMonitor(DisplayData, display)
+    display.setResolution(60, 19)
+    display.clear()
+
+    local title = "Power Monitor V1.2"
+    display.drawText(display.center(title), 1, color["white"], title, 0)
+
+    local sidebarText = DisplayData.ramUse .. " " .. DisplayData.connectedBatteries
+    display.drawText(display.getWidth() - string.len(sidebarText), 1, color["white"], sidebarText, 0)
+
+    display.drawText(1, 3, color["white"], DisplayData.stored, 0)
+    display.drawText(1, 4, color["white"], DisplayData.percent, 0)
+    display.drawText(1, 5, color["white"], DisplayData.input, 0)
+    display.drawText(1, 6, color["white"], DisplayData.output, 0)
+
+    display.drawText(1, 7, color["white"], DisplayData.avgInput, 0)
+    display.drawText(1, 8, color["white"], DisplayData.avgOutput, 0)
+    display.drawText(1, 9, color["white"], DisplayData.timeUntilGeneric, 0)
+
+    for index, warning in ipairs(DisplayData.warnings) do
+        display.drawText(1, index + 10, color["white"], warning, 0)
+    end
+
+    local buttonHeight = 2
+    display.makeButton(1, (display.getHeight() * 2) - buttonHeight + 1, 12, buttonHeight, color["orange"], color["white"], "NEW SCREEN", "buttonbar1Alt", "newMonitor")
+
     display.update()
 end
 
 -- Get screens, gpus, and bind them as best you can
-function ScreenUtil.fetchScreenData()
+local function fetchScreenData()
     Logger.log("Fetching screen data")
 
     gpus = {}
@@ -105,15 +129,18 @@ function ScreenUtil.fetchScreenData()
     Logger.log("Finished fetching screen data")
 end
 
-function ScreenUtil.drawScreens(DisplayData)
+local function drawScreens(DisplayData)
     for index, display in pairs(displays) do
-        -- TODO Insert switch for other displays
-        drawPowerMonitor(DisplayData, display)
+        if display.getSelectedTab() == "oldMonitor" then
+            drawPowerMonitor(DisplayData, display)
+        elseif display.getSelectedTab() == "newMonitor" then
+            drawNewPowerMonitor(DisplayData, display)
+        end
     end
 end
 
 -- Return to a good GPU/Screen state
-function ScreenUtil.resetScreens()
+local function resetScreens()
     for index, display in pairs(displays) do
         Logger.log("Resetting display. " .. display.getScreenAddress() .. " linked to GPU " .. display.getGPUAddress())
         display.setResolution(display.getMaxResolution())
@@ -136,13 +163,23 @@ function ScreenUtil.resetScreens()
     component.gpu.bind(adminTerminal, true)
 end
 
-function ScreenUtil.screenOverload()
+local function screenOverload()
     return #screens > #gpus
 end
 
-function ScreenUtil.processTouch(address, x, y)
-    Logger.log("Got signal: " .. name)
-    
+local function processTouch(address, x, y)
+    for index, display in pairs(displays) do
+        if display.getScreenAddress() == address then
+            Logger.log("Processing touch (" .. x .. ", " .. y .. "): ".. address)
+            display.processTouch(x, y)
+        end
+    end
 end
 
-return ScreenUtil
+return {
+    fetchScreenData = fetchScreenData,
+    drawScreens = drawScreens,
+    resetScreens = resetScreens,
+    screenOverload = screenOverload,
+    processTouch = processTouch,
+}
