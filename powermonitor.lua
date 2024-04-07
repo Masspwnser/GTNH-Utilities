@@ -10,22 +10,33 @@ local tickRate = 0.05 -- Minecraft tickrate in seconds
 
 local logicRate = tickRate -- Frequency to poll power data
 local drawRate = 1 -- Arbitrary display update rate in seconds
-local dataDecay = 900 -- Data decays after 5 mins to ensure ram isnt filled
+local dataDecay = 3600 -- Data decays after 5 mins to ensure ram isnt filled
 local batteries = {}
 
 local EnergyData = {
     inputHistory = {},
     outputHistory = {},
-    stored = 0,
-    max = 0,
-    percent = 0,
-    input = 0,
-    output = 0,
-    input60 = 0,
-    output60 = 0,
-    generatorsMaxCapacity = false, -- generators on (polar), generators max capacity (scaling/backup), always (constant)
+    generatorsOn = false, -- generators on (polar), generators max capacity (scaling/backup), always (constant)
     thresholdForGenerators = 0, -- power threshold for when generators turn on
-    peakInput = 0,
+
+    stored = 0,
+    storedMax = 0,
+    storedPercent = 0,
+
+    inputSec = 0,
+    inputMin = 0,
+    inputHr = 0,
+
+    outputSec = 0,
+    outputMin = 0,
+    outputHr = 0,
+
+    peakInputSec = 0,
+    peakInputMin = 0,
+    peakInputHr = 0,
+    peakOutputSec = 0,
+    peakOutputMin = 0,
+    peakOutputHr = 0,
 }
 
 local function secondsToString(seconds)
@@ -48,6 +59,10 @@ end
 
 -- Polls energy history to find average over @time seconds given @history
 local function getAverage(time, history)
+    if time > dataDecay then
+        Logger.log("Attempted to access data older than we currently can store.")
+        return 0
+    end
     local startTime = computer.uptime() - time
     local decayTime = computer.uptime() - dataDecay
     local sum = 0
@@ -70,6 +85,7 @@ local function getAverage(time, history)
 end
 
 local function fetchBatteries()
+    -- TODO only take in actual batteries
     local proxy
     batteries = {}
     for address, name in component.list("gt_machine", true) do
@@ -78,74 +94,121 @@ local function fetchBatteries()
             table.insert(batteries, proxy)
         end
     end
+    -- TODO sort batteries, BUT C FUNCTION CALL BOUNDARY BULLSHIT FUCK
 end
 
 local function doLogic(uptime)
-    local aggStored = 0
-    local aggMax = 0
-    local aggInput = 0
-    local aggOutput = 0
-
-    for index, device in pairs(batteries) do
-        aggStored = aggStored + device.getEUStored()
-        aggMax = aggMax + device.getEUCapacity()
-        aggInput = aggInput + device.getEUInputAverage()
-        aggOutput = aggOutput + device.getEUOutputAverage()
+    if #batteries == 0 then
+        return
     end
 
-    EnergyData.stored = aggStored
-    EnergyData.max = aggMax
-    EnergyData.inputHistory[uptime] = aggInput
-    EnergyData.outputHistory[uptime] = aggOutput
+    local bat = component.gt_machine -- Work with multiple tabs here... TODO
+    EnergyData.stored = bat.getEUStored()
+    EnergyData.storedMax = bat.getEUCapacity()
+    EnergyData.inputHistory[uptime] = bat.getEUInputAverage()
+    EnergyData.outputHistory[uptime] = bat.getEUOutputAverage()
 
-    EnergyData.input = getAverage(drawRate, EnergyData.inputHistory)
-    EnergyData.output = getAverage(drawRate, EnergyData.outputHistory)
-    EnergyData.input60 = getAverage(60, EnergyData.inputHistory)
-    EnergyData.output60 = getAverage(60, EnergyData.outputHistory)
+    -- Avg inputs over 1s, 1m, 1h
+    EnergyData.inputSec = getAverage(1, EnergyData.inputHistory)
+    EnergyData.inputMin = getAverage(60, EnergyData.inputHistory)
+    EnergyData.inputHr = getAverage(3600, EnergyData.inputHistory)
 
-    if EnergyData.peakInput < EnergyData.input60 then
-        EnergyData.peakInput = EnergyData.input60
+    -- Avg outputs over 1s, 1m, 1h
+    EnergyData.outputSec = getAverage(1, EnergyData.outputHistory)
+    EnergyData.outputMin = getAverage(60, EnergyData.outputHistory)
+    EnergyData.outputHr = getAverage(3600, EnergyData.outputHistory)
+
+    EnergyData.storedPercent = EnergyData.storedMax ~= 0 and (EnergyData.stored / EnergyData.storedMax) * 100 or 0;
+
+    -- Input peaks
+    if EnergyData.peakInputSec < EnergyData.inputSec then
+        EnergyData.peakInputSec = EnergyData.inputSec
     end
-    
-    EnergyData.percent = EnergyData.max ~= 0 and (EnergyData.stored / EnergyData.max) * 100 or 0;
+    if EnergyData.peakInputMin < EnergyData.inputMin then
+        EnergyData.peakInputMin = EnergyData.inputMin
+    end
+    if EnergyData.peakInputHr < EnergyData.inputHr then
+        EnergyData.peakInputHr = EnergyData.inputHr
+    end
 
-    local generatorsOnLastCycle = EnergyData.generatorsMaxCapacity
+    -- Output peaks
+    if EnergyData.peakOutputSec < EnergyData.outputSec then
+        EnergyData.peakOutputSec = EnergyData.outputSec
+    end
+    if EnergyData.peakOutputMin < EnergyData.outputMin then
+        EnergyData.peakOutputtMin = EnergyData.outputMin
+    end
+    if EnergyData.peakOutputHr < EnergyData.outputHr then
+        EnergyData.peakOutputHr = EnergyData.outputHr
+    end
 
-    -- crap logic, connect to turbines ideally
-    EnergyData.generatorsMaxCapacity = EnergyData.input60 > (EnergyData.peakInput * .75)
+    local generatorsWereOff = not EnergyData.generatorsOn
 
-    local generatorsOnTick = not generatorsOnLastCycle and EnergyData.generatorsMaxCapacity
-    -- first cycle, guess the threshold
-    if generatorsOnTick and EnergyData.thresholdForGenerators == 0 then
-        EnergyData.thresholdForGenerators = EnergyData.max * (.428) -- match to threshold
-    elseif generatorsOnTick then
+    -- Determine whether main generators are on (ignores passive power)
+    -- Currently based on whether input exceeds 75% of max power ever recorded
+    EnergyData.generatorsOn = EnergyData.inputMin > (EnergyData.peakInputMin * 0.75)
+
+    local generatorsJustTurnedOn = generatorsWereOff and EnergyData.generatorsOn
+    -- First cycle, guess the threshold.
+    if generatorsJustTurnedOn and EnergyData.thresholdForGenerators == 0 then
+        EnergyData.thresholdForGenerators = EnergyData.storedMax * 0.428 -- Match to analog threshold
+    elseif generatorsJustTurnedOn then
         EnergyData.thresholdForGenerators = EnergyData.stored
     end
 end
 
 local function getDisplayData()
-    local avgInput60 = getAverage(60, EnergyData.inputHistory)
-    local avgOutput60 = getAverage(60, EnergyData.outputHistory)
     local DisplayData = {}
 
-    DisplayData.stored = "Stored: " .. EnergyData.stored .. " / " .. EnergyData.max .. " EU"
-    DisplayData.percent = "Percent: " .. string.format("%.3f", EnergyData.percent) .. "%"
-    DisplayData.input = "Input: " .. string.format("%.0f", EnergyData.input) .. " EU/t"
-    DisplayData.output = "Output: " .. string.format("%.0f", EnergyData.output) .. " EU/t"
-    DisplayData.avgInput = "Average Input: " .. string.format("%.0f", avgInput60) .. " EU/t over 1m"
-    DisplayData.avgOutput = "Average Output: " .. string.format("%.0f", avgOutput60) .. " EU/t over 1m"
+    --------------- Values for new screen ---------------
+    -- Batteries
+    DisplayData.storedString = EnergyData.stored
+    DisplayData.storedPercent = EnergyData.storedPercent
+    DisplayData.thresholdPercent = EnergyData.thresholdForGenerators
+
+    -- Inputs
+    DisplayData.inputSecString = string.format("%.0f", EnergyData.inputSec) .. " EU/t"
+    DisplayData.inputSecPercent = EnergyData.peakInputSec ~= 0 and math.ceil((EnergyData.inputSec / EnergyData.peakInputSec) * 100) or 0;
+
+    DisplayData.inputMinString = string.format("%.0f", EnergyData.inputMin) .. " EU/t"
+    DisplayData.inputMinPercent = EnergyData.peakInputMin ~= 0 and math.ceil((EnergyData.inputMin / EnergyData.peakInputMin) * 100) or 0;
+
+    DisplayData.inputHrString = string.format("%.0f", EnergyData.inputHr) .. " EU/t"
+    DisplayData.inputHrPercent = EnergyData.peakInputHr ~= 0 and math.ceil((EnergyData.inputHr / EnergyData.peakInputHr) * 100) or 0;
+
+    -- Outputs
+    DisplayData.outputSecString = string.format("%.0f", EnergyData.outputSec) .. " EU/t"
+    DisplayData.outputSecPercent = EnergyData.peakOutputSec ~= 0 and math.ceil((EnergyData.outputSec / EnergyData.peakOutputSec) * 100) or 0;
+
+    DisplayData.outputMinString = string.format("%.0f", EnergyData.outputMin) .. " EU/t"
+    DisplayData.outputMinPercent = EnergyData.peakOutputMin ~= 0 and math.ceil((EnergyData.outputMin / EnergyData.peakOutputMin) * 100) or 0;
+
+    DisplayData.outputHrString = string.format("%.0f", EnergyData.outputHr) .. " EU/t"
+    DisplayData.outputHrPercent = EnergyData.peakOutputHr ~= 0 and math.ceil((EnergyData.outputHr / EnergyData.peakOutputHr) * 100) or 0;
+
+    -- Util
+    DisplayData.numBatteries = #batteries
+    DisplayData.ramPercent = math.ceil(((computer.totalMemory() - computer.freeMemory()) / computer.totalMemory()) * 100)
+    --------------------------------
+
+    DisplayData.stored = "Stored: " .. EnergyData.stored .. " / " .. EnergyData.storedMax .. " EU"
+    DisplayData.percent = "Percent: " .. string.format("%.3f", EnergyData.storedPercent) .. "%"
+    DisplayData.inputSec = "Input: " .. string.format("%.0f", EnergyData.inputSec) .. " EU/t"
+    DisplayData.outputSec = "Output: " .. string.format("%.0f", EnergyData.outputSec) .. " EU/t"
+    DisplayData.avgInput = "Average Input: " .. string.format("%.0f", EnergyData.inputMin) .. " EU/t over 1m"
+    DisplayData.avgOutput = "Average Output: " .. string.format("%.0f", EnergyData.outputMin) .. " EU/t over 1m"
 
     DisplayData.connectedBatteries = "BAT: " .. string.format("%d", #batteries)
     DisplayData.ramUse = "RAM: " .. string.format("%2.f", ((computer.totalMemory() - computer.freeMemory()) / computer.totalMemory()) * 100) .. "%"
 
-    local powerAbs = math.abs(EnergyData.input60 - EnergyData.output60) * 20
-    if EnergyData.input60 == EnergyData.output60 or #batteries == 0 then
+    local powerAbs = math.abs(EnergyData.inputMin - EnergyData.outputMin) * 20
+    if EnergyData.inputMin == EnergyData.outputMin or #batteries == 0 then
         DisplayData.timeUntilGeneric = ""
-    elseif EnergyData.input60 > EnergyData.output60 then
-        DisplayData.timeUntilGeneric = "Time until full: " .. secondsToString((EnergyData.max - EnergyData.stored) / powerAbs)
-    elseif not EnergyData.generatorsMaxCapacity and EnergyData.thresholdForGenerators < EnergyData.stored then
+    elseif EnergyData.inputMin > EnergyData.outputMin then
+        DisplayData.timeUntilGeneric = "Time until full: " .. secondsToString((EnergyData.storedMax - EnergyData.stored) / powerAbs)
+    elseif not EnergyData.generatorsOn and EnergyData.thresholdForGenerators < EnergyData.stored then
         DisplayData.timeUntilGeneric = "Time until generators on: " .. secondsToString((EnergyData.stored - EnergyData.thresholdForGenerators) / powerAbs)
-    elseif EnergyData.generatorsMaxCapacity and EnergyData.output60 > EnergyData.input60 then
+    elseif EnergyData.generatorsOn and EnergyData.outputMin > EnergyData.inputMin then
         DisplayData.timeUntilGeneric = "Time until empty: ".. secondsToString(EnergyData.stored / powerAbs)
     else
         DisplayData.timeUntilGeneric = ""
@@ -163,13 +226,13 @@ local function getDisplayData()
 
     if not batteries or #batteries == 0 then
         table.insert(DisplayData.warnings, "WARNING: Failed to obtain battery data")
-    elseif EnergyData.percent == 0 then
+    elseif EnergyData.storedPercent == 0 then
         table.insert(DisplayData.warnings, "WARNING: No Power")
-    elseif EnergyData.percent < 5 then
+    elseif EnergyData.storedPercent < 5 then
         table.insert(DisplayData.warnings, "WARNING: Low Power")
     end
 
-    if avgOutput60 > avgInput60 and EnergyData.generatorsMaxCapacity then
+    if EnergyData.outputMin > EnergyData.inputMin and EnergyData.generatorsOn then
         table.insert(DisplayData.warnings, "WARNING: Output exceeds input")
     end
 
@@ -195,6 +258,8 @@ local function main()
 
     fetchBatteries()
     ScreenUtil.fetchScreenData()
+
+    Logger.log("Successfully fetched data.")
 
     while true do
         local uptime = computer.uptime()
