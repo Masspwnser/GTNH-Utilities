@@ -5,6 +5,7 @@ local component = require("component")
 local computer = require("computer")
 local ScreenUtil = require("ScreenUtil")
 local Logger = require("Logger")
+local Utilities = require("Utilities")
 
 local tickRate = 0.05 -- Minecraft tickrate in seconds
 
@@ -91,10 +92,11 @@ local function fetchBatteries()
     for address, name in component.list("gt_machine", true) do
         proxy = component.proxy(address)
         if proxy ~= nil then
+            proxy.special = proxy.getEUCapacity()
             table.insert(batteries, proxy)
         end
     end
-    -- TODO sort batteries, BUT C FUNCTION CALL BOUNDARY BULLSHIT FUCK
+    table.sort(batteries, Utilities.compareComponents)
 end
 
 local function doLogic(uptime)
@@ -102,7 +104,7 @@ local function doLogic(uptime)
         return
     end
 
-    local bat = component.gt_machine -- Work with multiple tabs here... TODO
+    local bat = batteries[1] -- Work with multiple tabs here... TODO
     EnergyData.stored = bat.getEUStored()
     EnergyData.storedMax = bat.getEUCapacity()
     EnergyData.inputHistory[uptime] = bat.getEUInputAverage()
@@ -118,7 +120,7 @@ local function doLogic(uptime)
     EnergyData.outputMin = getAverage(60, EnergyData.outputHistory)
     EnergyData.outputHr = getAverage(3600, EnergyData.outputHistory)
 
-    EnergyData.storedPercent = EnergyData.storedMax ~= 0 and (EnergyData.stored / EnergyData.storedMax) * 100 or 0;
+    EnergyData.storedPercent = EnergyData.storedMax ~= 0 and (EnergyData.stored / EnergyData.storedMax) or 0;
 
     -- Input peaks
     if EnergyData.peakInputSec < EnergyData.inputSec then
@@ -192,7 +194,7 @@ local function getDisplayData()
     --------------------------------
 
     DisplayData.stored = "Stored: " .. EnergyData.stored .. " / " .. EnergyData.storedMax .. " EU"
-    DisplayData.percent = "Percent: " .. string.format("%.3f", EnergyData.storedPercent) .. "%"
+    DisplayData.percent = "Percent: " .. string.format("%.3f", (EnergyData.storedPercent * 100)) .. "%"
     DisplayData.inputSec = "Input: " .. string.format("%.0f", EnergyData.inputSec) .. " EU/t"
     DisplayData.outputSec = "Output: " .. string.format("%.0f", EnergyData.outputSec) .. " EU/t"
     DisplayData.avgInput = "Average Input: " .. string.format("%.0f", EnergyData.inputMin) .. " EU/t over 1m"
@@ -228,7 +230,7 @@ local function getDisplayData()
         table.insert(DisplayData.warnings, "WARNING: Failed to obtain battery data")
     elseif EnergyData.storedPercent == 0 then
         table.insert(DisplayData.warnings, "WARNING: No Power")
-    elseif EnergyData.storedPercent < 5 then
+    elseif EnergyData.storedPercent < 0.05 then
         table.insert(DisplayData.warnings, "WARNING: Low Power")
     end
 

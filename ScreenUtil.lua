@@ -1,7 +1,8 @@
 local component = require("component")
 local computer = require("computer")
 local Logger = require("Logger")
-local deviceInfo = computer.getDeviceInfo()
+local Utilities = require("Utilities")
+local ColorUtil = dofile("external/Color.lua")
 
 local adminTerminal = "62c0ba71-8443-407f-89f9-58b10fedc372"
 local adminKeyboard = "b462c75a-3756-4f83-8f56-29b931a6986a"
@@ -23,12 +24,28 @@ local color = {
     orange=0xDB5704
 }
 
--- Compare two components by tier, ex: 3 > 2, so 3 comes first
-local function compareComponents(comp1, comp2)
-    if comp1.address == adminTerminal or comp2.address == adminTerminal then
-        return comp1.address == adminTerminal
+local function interpolate(col1, col2, p)
+    return math.floor(col1 * p + col2 * (1 - p))
+end
+
+local function drawBar(x, y, height, percent, label, display)
+    local startR, startG, startB = ColorUtil.integerToRGB(color.blue)
+    local endR, endG, endB = ColorUtil.integerToRGB(color.red)
+
+    local screenLength, _ = display.getResolution()
+    local barLength = screenLength - x -- TODO Check this logic
+
+    for i=0, barLength, 2 do
+        local pixelPercent = i / barLength
+        local curR = interpolate(startR, endR, pixelPercent)
+        local curG = interpolate(startG, endG, pixelPercent)
+        local curB = interpolate(startB, endB, pixelPercent)
+        local currentColor = ColorUtil.RGBToInteger(curR, curG, curB)
+
+        if pixelPercent <= percent then
+            display.drawRectangle(x + i, y, 1, height, currentColor, currentColor, " ")
+        end
     end
-    return tonumber(deviceInfo[comp1.address].capacity) > tonumber(deviceInfo[comp2.address].capacity)
 end
 
 local function drawNewPowerMonitor(DisplayData, display)
@@ -36,6 +53,7 @@ local function drawNewPowerMonitor(DisplayData, display)
     display.clear()
 
     -- TODO make graphics
+    drawBar(1,1,2,DisplayData.storedPercent,DisplayData.storedString,display)
 
     -- Warnings
     for index, warning in ipairs(DisplayData.warnings) do
@@ -90,7 +108,7 @@ local function fetchScreenData()
         Logger.log("Discovered GPU: " .. address)
         table.insert(gpus, component.proxy(address))
     end
-    table.sort(gpus, compareComponents)
+    table.sort(gpus, Utilities.compareComponents)
 
     -- TODO Make screens dynamic
     screens = {}
@@ -98,7 +116,7 @@ local function fetchScreenData()
         Logger.log("Discovered Screen: " .. address)
         table.insert(screens, component.proxy(address))
     end
-    table.sort(screens, compareComponents)
+    table.sort(screens, Utilities.compareComponents)
 
     component.setPrimary("screen", adminTerminal)
     component.setPrimary("gpu", gpus[1].address)
